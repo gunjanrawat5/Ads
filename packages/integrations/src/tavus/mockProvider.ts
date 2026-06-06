@@ -26,12 +26,14 @@ export class MockTavusProvider implements TavusProvider {
     input: TavusSessionInput,
   ): Promise<TavusSessionResult> {
     const persona = resolvePersona(input.adCandidate.category);
-    const fallbackAgentScript = buildConversationalContext({
-      persona,
-      videoContext: input.videoContext,
-      adCandidate: input.adCandidate,
-      openingScript: input.openingScript,
-    });
+    const fallbackAgentScript =
+      input.conversationalContext ??
+      buildConversationalContext({
+        persona,
+        videoContext: input.videoContext,
+        adCandidate: input.adCandidate,
+        openingScript: input.openingScript,
+      });
 
     return {
       provider: "mock",
