@@ -456,13 +456,6 @@ export default function GetStartedPage() {
                     </div>
                   )}
                 </div>
-                <p className="max-w-md text-base leading-relaxed sm:text-xl">
-                  {activeAd
-                    ? `Ad runs up to ${adDurationSeconds(activeAd)}s. Say "stop" for the closing line, then auto-dismiss.`
-                    : adLoading
-                      ? "Tavus agent is starting…"
-                      : "Ads auto-trigger at 0:19 and 0:39 based on what happens in the clip."}
-                </p>
               </div>
             </div>
 
