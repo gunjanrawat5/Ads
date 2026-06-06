@@ -9,6 +9,8 @@ export interface TavusSessionInput {
   videoContext: VideoContext;
   adCandidate: AdCandidate;
   openingScript: string;
+  /** When set, sent verbatim as Tavus conversational_context (broadcast slots). */
+  conversationalContext?: string;
 }
 
 /**
@@ -23,6 +25,7 @@ export interface TavusSessionResult {
   sessionId: string;
   tavusConversationUrl?: string;
   tavusConversationId?: string;
+  meetingToken?: string;
   fallbackAgentScript?: string;
   status: "ready" | "fallback_ready";
 }

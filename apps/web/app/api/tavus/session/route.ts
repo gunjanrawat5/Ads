@@ -69,6 +69,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       videoContext,
       adCandidate,
       openingScript: effectiveScript,
+      conversationalContext:
+        adIndex === 0 || adIndex === 1 ? effectiveScript : undefined,
     });
     return NextResponse.json(result);
   } catch (err) {

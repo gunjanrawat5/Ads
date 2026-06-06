@@ -45,6 +45,7 @@ export interface RealTavusProviderOptions {
 interface TavusConversationResponse {
   conversation_id?: string;
   conversation_url?: string;
+  meeting_token?: string;
   status?: string;
 }
 
@@ -83,12 +84,14 @@ export class RealTavusProvider implements TavusProvider {
     // (TAVUS_PERSONA_ID_{KEY}) win; fall back to the global TAVUS_PERSONA_ID /
     // TAVUS_REPLICA_ID when a category-specific id is not configured.
     const persona = resolvePersona(input.adCandidate.category);
-    const conversationalContext = buildConversationalContext({
-      persona,
-      videoContext: input.videoContext,
-      adCandidate: input.adCandidate,
-      openingScript: input.openingScript,
-    });
+    const conversationalContext =
+      input.conversationalContext ??
+      buildConversationalContext({
+        persona,
+        videoContext: input.videoContext,
+        adCandidate: input.adCandidate,
+        openingScript: input.openingScript,
+      });
 
     const body = {
       replica_id: persona.replicaId || this.options.replicaId,
@@ -133,6 +136,7 @@ export class RealTavusProvider implements TavusProvider {
       sessionId: input.sessionId,
       tavusConversationUrl: data.conversation_url,
       tavusConversationId: data.conversation_id,
+      meetingToken: data.meeting_token,
       status: "ready",
     };
   }

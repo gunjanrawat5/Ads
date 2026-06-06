@@ -1,15 +1,56 @@
 "use client";
 
+import { AD_SLOT_1, AD_SLOT_2, type AdFixture } from "@ads/core";
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { TavusAgentPanel } from "../../components/tavus/TavusAgentPanel";
+import { destroyDailyCall } from "../../lib/dailyCallSingleton";
+import { tavusLog } from "../../lib/tavusDebug";
+import type { TavusSessionResponse } from "../../lib/tavus";
 
-const adMarkers = [
-  { label: "Ad 1", time: 30 },
-  { label: "Ad 2", time: 90 },
-];
+const AD_SLOTS: AdFixture[] = [AD_SLOT_1, AD_SLOT_2];
+
+/** After stop / negative feedback: let agent say closing line, then hard-close. */
+const AD_QUICK_CLOSE_SECONDS = 4;
+
+const QUICK_CLOSE_SIGNALS = new Set([
+  "skip",
+  "annoyed",
+  "tell_me_quickly",
+  "not_relevant",
+  "too_long",
+]);
+
+const knicksVideoContext = {
+  id: "knicks-finals-game2",
+  title: "Knicks vs Spurs — NBA Finals Game 2",
+  topic: "NBA Finals live broadcast",
+  tags: ["nba", "knicks", "finals", "basketball"],
+  transcriptSnippet:
+    "Live coverage of Knicks Finals Game 2 at Madison Square Garden.",
+  viewerMode: "focused" as const,
+  interruptionRisk: "high" as const,
+  recommendedAdStyle: "short_utility" as const,
+};
+
+const FEEDBACK_BUTTONS = [
+  { signal: "too_long", label: "Too long" },
+  { signal: "not_relevant", label: "Not relevant" },
+  { signal: "annoyed", label: "I'm annoyed" },
+  { signal: "tell_me_quickly", label: "Tell me quickly" },
+  { signal: "interested", label: "I'm interested" },
+  { signal: "skip", label: "Skip this" },
+] as const;
+
+type ActiveAd = {
+  slot: AdFixture;
+  session: TavusSessionResponse;
+};
 
 function formatTime(timeInSeconds: number) {
-  const safeTime = Number.isFinite(timeInSeconds) ? Math.max(0, timeInSeconds) : 0;
+  const safeTime = Number.isFinite(timeInSeconds)
+    ? Math.max(0, timeInSeconds)
+    : 0;
   const minutes = Math.floor(safeTime / 60);
   const seconds = Math.floor(safeTime % 60);
 
@@ -20,24 +61,205 @@ function formatTime(timeInSeconds: number) {
 
 export default function GetStartedPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const firedRef = useRef<Set<number>>(new Set());
+  const adCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [sessionId, setSessionId] = useState(() => `demo-${Date.now()}`);
+
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(180);
+  const [activeAd, setActiveAd] = useState<ActiveAd | null>(null);
+  const [adLoading, setAdLoading] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
 
   const markers = useMemo(
     () =>
-      adMarkers.map((marker) => ({
+      AD_SLOTS.map((slot) => ({
+        label: `Ad ${slot.adIndex + 1}`,
+        time: slot.triggerTimeSeconds,
+        triggerMoment: slot.triggerMoment,
+      })).map((marker) => ({
         ...marker,
         left: `${(marker.time / duration) * 100}%`,
       })),
-    [duration]
+    [duration],
   );
+
+  const dismissAd = useCallback(() => {
+    if (adCloseTimerRef.current) {
+      clearTimeout(adCloseTimerRef.current);
+      adCloseTimerRef.current = null;
+    }
+
+    void destroyDailyCall();
+    setActiveAd(null);
+    setFeedbackStatus(null);
+    void videoRef.current?.play();
+  }, []);
+
+  const scheduleAdClose = useCallback(
+    (seconds: number, reason: string) => {
+      if (adCloseTimerRef.current) {
+        clearTimeout(adCloseTimerRef.current);
+      }
+
+      tavusLog(`scheduling ad close in ${seconds}s`, { reason });
+      adCloseTimerRef.current = setTimeout(() => {
+        dismissAd();
+      }, seconds * 1000);
+    },
+    [dismissAd],
+  );
+
+  const sendFeedback = useCallback(
+    async (buttonSignal: string) => {
+      if (!activeAd) {
+        return;
+      }
+
+      setFeedbackStatus("Sending feedback…");
+
+      try {
+        const res = await fetch("/api/feedback", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            feedback: {
+              id: `feedback-${Date.now()}`,
+              sessionId,
+              buttonSignal,
+              timestamp: new Date().toISOString(),
+            },
+            videoContext: knicksVideoContext,
+            adCandidate: activeAd.slot.adCandidate,
+            adCategory: activeAd.slot.adCandidate.category,
+          }),
+        });
+
+        const data = (await res.json()) as {
+          agentResponse?: { script?: string; shouldStop?: boolean };
+          analysis?: { emotionSignal?: string };
+        };
+
+        if (res.ok) {
+          const closing =
+            data.agentResponse?.shouldStop ||
+            QUICK_CLOSE_SIGNALS.has(buttonSignal);
+
+          setFeedbackStatus(
+            closing
+              ? `${data.agentResponse?.script ?? "Got it."} Closing ad…`
+              : (data.agentResponse?.script ??
+                `Signal recorded (${data.analysis?.emotionSignal ?? buttonSignal}).`),
+          );
+
+          if (closing) {
+            scheduleAdClose(AD_QUICK_CLOSE_SECONDS, `feedback:${buttonSignal}`);
+          }
+        } else {
+          setFeedbackStatus("Feedback failed — try again.");
+        }
+      } catch {
+        setFeedbackStatus("Feedback failed — try again.");
+      }
+    },
+    [activeAd, dismissAd, scheduleAdClose, sessionId],
+  );
+
+  const handleStopRequested = useCallback(() => {
+    tavusLog("viewer said stop — scheduling quick close after agent closing line");
+    void sendFeedback("skip");
+  }, [sendFeedback]);
+
+  const triggerAd = useCallback(
+    async (slot: AdFixture) => {
+      if (adLoading || activeAd) {
+        return;
+      }
+
+      videoRef.current?.pause();
+      setAdLoading(true);
+      setFeedbackStatus(null);
+
+      try {
+        const res = await fetch("/api/tavus/session", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            videoContext: knicksVideoContext,
+            adCandidate: slot.adCandidate,
+            openingScript: slot.tavusContext || slot.adCandidate.pitchAngle,
+            adIndex: slot.adIndex,
+          }),
+        });
+
+        const data = (await res.json()) as TavusSessionResponse;
+
+        tavusLog("Tavus session created for ad slot", {
+          adIndex: slot.adIndex,
+          provider: data.provider,
+          status: data.status,
+          conversationUrl: data.tavusConversationUrl,
+          hasMeetingToken: Boolean(data.meetingToken),
+        });
+
+        setActiveAd({ slot, session: data });
+      } catch {
+        setActiveAd({
+          slot,
+          session: {
+            provider: "mock",
+            sessionId,
+            fallbackAgentScript:
+              slot.tavusContext || slot.adCandidate.pitchAngle,
+            status: "fallback_ready",
+          },
+        });
+      } finally {
+        setAdLoading(false);
+      }
+    },
+    [activeAd, adLoading, sessionId],
+  );
+
+  useEffect(() => {
+    if (!activeAd) {
+      return;
+    }
+
+    scheduleAdClose(
+      activeAd.slot.adCandidate.defaultLengthSeconds,
+      `slot-${activeAd.slot.adIndex}-full-duration`,
+    );
+
+    return () => {
+      if (adCloseTimerRef.current) {
+        clearTimeout(adCloseTimerRef.current);
+        adCloseTimerRef.current = null;
+      }
+    };
+  }, [activeAd, scheduleAdClose]);
 
   function syncTime() {
     if (!videoRef.current) {
       return;
     }
 
-    setCurrentTime(videoRef.current.currentTime);
+    const time = videoRef.current.currentTime;
+    setCurrentTime(time);
+
+    for (const slot of AD_SLOTS) {
+      if (
+        time >= slot.triggerTimeSeconds &&
+        !firedRef.current.has(slot.adIndex) &&
+        !activeAd &&
+        !adLoading
+      ) {
+        firedRef.current.add(slot.adIndex);
+        void triggerAd(slot);
+      }
+    }
   }
 
   function syncDuration() {
@@ -67,6 +289,31 @@ export default function GetStartedPage() {
     videoRef.current.currentTime = time;
     setCurrentTime(time);
   }
+
+  function startSession() {
+    if (adCloseTimerRef.current) {
+      clearTimeout(adCloseTimerRef.current);
+      adCloseTimerRef.current = null;
+    }
+
+    void destroyDailyCall();
+    setSessionId(`demo-${Date.now()}`);
+    firedRef.current.clear();
+    setActiveAd(null);
+    setAdLoading(false);
+    setFeedbackStatus(null);
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      void videoRef.current.play();
+    }
+    setCurrentTime(0);
+  }
+
+  const fallbackScript =
+    activeAd?.session.fallbackAgentScript ??
+    activeAd?.slot.tavusContext ??
+    activeAd?.slot.adCandidate.pitchAngle ??
+    "";
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#1b1b1b] px-4 py-6 text-[#fff8d6]">
@@ -102,9 +349,72 @@ export default function GetStartedPage() {
                     onTimeUpdate={syncTime}
                     onLoadedMetadata={syncDuration}
                   />
+
+                  {(activeAd || adLoading) && (
+                    <div className="absolute inset-0 flex items-end justify-end bg-black/50 p-3 sm:p-4">
+                      <div className="flex max-h-[85%] w-full max-w-md flex-col border-2 border-[#7bdff6] bg-[#1b1b1b] p-3 shadow-[6px_6px_0px_0px_#000] sm:max-w-lg">
+                        {adLoading ? (
+                          <p className="text-sm text-[#7bdff6]">
+                            Starting Tavus agent…
+                          </p>
+                        ) : (
+                          activeAd && (
+                            <>
+                              <TavusAgentPanel
+                                conversationUrl={
+                                  activeAd.session.tavusConversationUrl ?? ""
+                                }
+                                meetingToken={activeAd.session.meetingToken}
+                                provider={activeAd.session.provider}
+                                fallbackScript={fallbackScript}
+                                productName={
+                                  activeAd.slot.adCandidate.productName
+                                }
+                                triggerMoment={activeAd.slot.triggerMoment}
+                                onPerceptionSignal={sendFeedback}
+                                onConversationEnd={dismissAd}
+                                onStopRequested={handleStopRequested}
+                              />
+
+                              <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[#f3e8a6]/30 pt-3">
+                                {FEEDBACK_BUTTONS.map(({ signal, label }) => (
+                                  <button
+                                    key={signal}
+                                    type="button"
+                                    onClick={() => void sendFeedback(signal)}
+                                    className="border border-[#f3e8a6]/60 px-2 py-1 text-[10px] uppercase tracking-wide transition-colors hover:bg-[#f3e8a6] hover:text-black sm:text-xs"
+                                  >
+                                    {label}
+                                  </button>
+                                ))}
+                              </div>
+
+                              {feedbackStatus && (
+                                <p className="mt-2 text-xs leading-relaxed text-[#86efac]">
+                                  {feedbackStatus}
+                                </p>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={dismissAd}
+                                className="mt-3 w-full border border-[#f3e8a6] px-2 py-1 text-xs transition-colors hover:bg-[#f3e8a6] hover:text-black"
+                              >
+                                Dismiss &amp; resume game
+                              </button>
+                            </>
+                          )
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <p className="max-w-md text-base leading-relaxed sm:text-xl">
-                  Tavus Agent pops up here as floating picture-in-picture.
+                  {activeAd
+                    ? `Ad runs up to ${activeAd.slot.adCandidate.defaultLengthSeconds}s. Say "stop" to hear the closing line and auto-dismiss.`
+                    : adLoading
+                      ? "Tavus agent is starting…"
+                      : "Ads auto-trigger at 0:19 and 0:39 based on what happens in the clip."}
                 </p>
               </div>
             </div>
@@ -122,13 +432,14 @@ export default function GetStartedPage() {
             <div className="flex flex-col gap-4 text-sm sm:text-lg">
               <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                 <span>{`Timeline: ${formatTime(currentTime)}`}</span>
-                <div className="relative flex-1 min-w-[12rem]">
+                <div className="relative min-w-[12rem] flex-1">
                   <div className="pointer-events-none absolute left-0 top-1/2 h-[2px] w-full -translate-y-1/2 bg-[#f3e8a6]" />
                   {markers.map((marker) => (
                     <button
                       key={marker.label}
                       type="button"
-                      aria-label={`Jump to ${marker.label}`}
+                      aria-label={`Jump to ${marker.label} at ${formatTime(marker.time)}`}
+                      title={marker.triggerMoment}
                       className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#fff8d6] bg-white"
                       style={{ left: marker.left }}
                       onClick={() => jumpTo(marker.time)}
@@ -141,7 +452,7 @@ export default function GetStartedPage() {
                     step={0.1}
                     value={Math.min(currentTime, duration)}
                     onChange={handleTimelineChange}
-                    className="relative h-4 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:h-[2px] [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:mt-[-7px] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[#1b1b1b] [&::-webkit-slider-thumb]:bg-[#ff6b6b] [&::-moz-range-track]:h-[2px] [&::-moz-range-track]:bg-transparent [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-[#1b1b1b] [&::-moz-range-thumb]:bg-[#ff6b6b]"
+                    className="relative h-4 w-full cursor-pointer appearance-none bg-transparent [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-[#1b1b1b] [&::-moz-range-thumb]:bg-[#ff6b6b] [&::-moz-range-track]:h-[2px] [&::-moz-range-track]:bg-transparent [&::-webkit-slider-runnable-track]:h-[2px] [&::-webkit-slider-runnable-track]:bg-transparent [&::-webkit-slider-thumb]:mt-[-7px] [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-[#1b1b1b] [&::-webkit-slider-thumb]:bg-[#ff6b6b]"
                   />
                 </div>
                 <span>{formatTime(duration)}</span>
@@ -157,7 +468,7 @@ export default function GetStartedPage() {
                     style={{ left: marker.left }}
                     onClick={() => jumpTo(marker.time)}
                   >
-                    {marker.label}
+                    {`${marker.label} (${formatTime(marker.time)})`}
                   </button>
                 ))}
               </div>
@@ -171,6 +482,7 @@ export default function GetStartedPage() {
           </Link>
           <button
             type="button"
+            onClick={startSession}
             className="border-2 border-[#f3e8a6] bg-[#ff6b6b] px-4 py-2 text-black transition-transform duration-150 hover:-translate-y-0.5"
           >
             Start Session

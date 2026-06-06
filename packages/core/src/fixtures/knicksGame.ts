@@ -12,13 +12,15 @@ import type { AdCandidate } from "../schemas/context";
 /**
  * A single hardcoded broadcast ad slot.
  *
- * - `adIndex`      0 for the first slot, 1 for the second.
- * - `triggerMoment` the in-game broadcast beat that cues the slot.
- * - `tavusContext`  the conversational_context handed to the Tavus agent.
- * - `adCandidate`   the product pitched in this slot.
+ * - `adIndex`              0 for the first slot, 1 for the second.
+ * - `triggerTimeSeconds`   point in the video (seconds) at which the frontend fires the ad.
+ * - `triggerMoment`        the in-game broadcast beat that cues the slot.
+ * - `tavusContext`         the conversational_context handed to the Tavus agent.
+ * - `adCandidate`          the product pitched in this slot.
  */
 export type AdFixture = {
   adIndex: number;
+  triggerTimeSeconds: number;
   triggerMoment: string;
   tavusContext: string;
   adCandidate: AdCandidate;
@@ -39,97 +41,100 @@ export type ArcEntry = {
 
 export const AD_SLOT_1: AdFixture = {
   adIndex: 0,
+  triggerTimeSeconds: 19,
   triggerMoment:
-    "First official timeout, end of the 1st quarter — Knicks lead the Finals opener 28-24 at the Garden.",
+    'OG Anunoby battles Luke Kornet for the ball. Anunoby is visibly wearing ' +
+    'neon green Nike basketball shoes.',
   tavusContext:
-    "You are a calm, respectful courtside ad agent during the NBA Finals. " +
-    "The viewer is locked into a tight Knicks game, so keep it short and " +
-    'utility-first. Open with this line: "Great quarter to be a Knicks fan. ' +
-    "Quick heads-up while they reset — StatStream gives you live shot charts " +
-    'and player matchups in one tap, no channel surfing." ' +
-    "If the viewer sounds annoyed, rushed, or uninterested, acknowledge once, " +
-    "shorten or stop, and never intensify persuasion.",
+    'You are presenting a Nike basketball shoe ad inside a live NBA Finals broadcast. ' +
+    'The viewer just watched OG Anunoby fight for the ball against Luke Kornet at ' +
+    'the 19-second mark. Anunoby was wearing neon green Nike shoes during that play. ' +
+    'Wait for the viewer to say hi or speak first, then deliver a ~30 second pitch. ' +
+    'STRUCTURE (about 30 seconds total): ' +
+    '(1) Hook — tie to what they just saw: "Those neon green Nikes on Anunoby? Same shoe." ' +
+    '(2) Product — Nike Air Zoom Flight, neon green Anunoby colorway. Full-length Zoom Air ' +
+    'unit for responsive court feel, lightweight upper built for guards and forwards who ' +
+    'cut hard and play above the rim. Same line Anunoby wore tonight. ' +
+    '(3) Offer — 4th of July sale: 15% off at nike.com. Free shipping over $50. ' +
+    'Sale runs through July 4th only. ' +
+    '(4) Close — "Link in the overlay if you want the pair." ' +
+    'STOP RULES (critical — follow exactly): ' +
+    'If the viewer says stop, skip, enough, quit, or wants to watch the game: ' +
+    'say ONLY this closing line: "Fair — Nike Air Zoom Flight, 15% off at nike.com. Enjoy the game." ' +
+    'Then stop talking immediately. Do not add anything else. The ad will end on its own. ' +
+    'If they sound annoyed or rushed (not a full stop): ' +
+    'say ONLY: "Fair — Nike Air Zoom, 15% off this week." then stop. ' +
+    'Never pressure. Never guilt. Never keep pitching after stop or annoyance.',
   adCandidate: {
-    id: "statstream-live",
-    productName: "StatStream",
-    category: "Sports & live stats app",
+    id: 'nike-air-zoom-anunoby',
+    productName: 'Nike Air Zoom Flight',
+    category: 'basketball_shoe',
     pitchAngle:
-      "Live shot charts and player matchups during the game without leaving the broadcast.",
-    defaultLengthSeconds: 20,
+      'The same neon green Nike Air Zoom Flight Anunoby just wore — full-length Zoom Air, ' +
+      'lightweight build for cuts and elevation. 4th of July sale: 15% off at nike.com through July 4.',
+    defaultLengthSeconds: 30,
     relevanceReason:
-      "The viewer is watching a close Finals game and may want live stats during natural breaks.",
+      'Anunoby visibly wearing neon green Nike Air Zoom Flight shoes during the 19-second play.',
   },
 };
 
 export const AD_SLOT_2: AdFixture = {
   adIndex: 1,
-  triggerMoment:
-    "Halftime — the Finals opener is tied at the break and the Garden is on its feet.",
-  tavusContext:
-    "You are a calm, respectful courtside ad agent during NBA Finals halftime. " +
-    "The viewer has a few minutes before the second half. Keep it short and " +
-    'utility-first. Open with this line: "Halftime of a tied Finals game — ' +
-    "perfect window. CourtsideEats gets game-night food to your door before " +
-    'the third quarter tips off." ' +
-    "If the viewer sounds annoyed, rushed, or uninterested, acknowledge once, " +
-    "shorten or stop, and never intensify persuasion.",
+  triggerTimeSeconds: 39,
+  triggerMoment: 'Final buzzer. Knicks win 105-104. 2-0 series lead.',
+  tavusContext: '', // populated at runtime by buildAd2Context()
   adCandidate: {
-    id: "courtsideeats-delivery",
-    productName: "CourtsideEats",
-    category: "Food delivery",
+    id: 'knicks-finals-jersey',
+    productName: 'Official Knicks Finals Jersey',
+    category: 'team_jersey',
     pitchAngle:
-      "Game-night food delivered before the third quarter tips off.",
-    defaultLengthSeconds: 20,
-    relevanceReason:
-      "It is halftime of a live Finals game and the viewer may want food before play resumes.",
+      'Celebrate the win with your team. Official Knicks jerseys at knicksjersey.com.',
+    defaultLengthSeconds: 12,
+    relevanceReason: 'Knicks win Game 2, 2-0 series lead, peak celebration moment.',
   },
 };
 
-const AD_2_DE_ESCALATION =
-  "If the viewer sounds annoyed, rushed, or uninterested, acknowledge once, " +
-  "shorten or stop, and never intensify persuasion.";
-
-/**
- * Builds the AD_SLOT_2 conversational_context from the viewer's AD_SLOT_1 arc.
- *
- * Three deterministic variants:
- *   1. frustrated / rushed — the viewer pushed back during Ad 1, so this opens
- *      with an explicit "Quick one" and offers an immediate exit.
- *   2. engaged — the viewer leaned in during Ad 1, so continue warmly.
- *   3. no prior interaction — empty arc, so fall back to the neutral default.
- */
 export function buildAd2Context(arc: ArcEntry[]): string {
-  const signals = new Set(arc.map((entry) => entry.emotionSignal));
-  const priorCategory = arc.length > 0 ? arc[arc.length - 1].adCategory : "unknown";
+  const base =
+    'You are presenting a Knicks Finals Jersey ad inside a live NBA Finals broadcast. ' +
+    'The Knicks just won 105-104. Jalen Brunson hit the go-ahead free throw. ' +
+    'Wembanyama missed the buzzer-beater. Knicks lead the series 2-0. ' +
+    'The jersey is available at knicksjersey.com. ';
 
-  if (signals.has("frustrated") || signals.has("rushed")) {
-    return [
-      "You are a calm, respectful courtside ad agent during NBA Finals halftime.",
-      `The viewer pushed back on the last ad (category: ${priorCategory}), so keep pressure low and respect their time.`,
-      'Open with this line: "Quick one, then I\'ll let you enjoy halftime — ' +
-        'CourtsideEats can have game-night food at your door before the third ' +
-        'quarter. Want it, or should I drop it?"',
-      AD_2_DE_ESCALATION,
-    ].join("\n\n");
+  const wasFrustrated = arc.some(
+    (e) => e.emotionSignal === 'frustrated' || e.emotionSignal === 'annoyed',
+  );
+  const wasRushed = arc.some((e) => e.emotionSignal === 'tell_me_quickly');
+  const wasEngaged = arc.some((e) => e.emotionSignal === 'interested');
+
+  if (wasFrustrated || wasRushed) {
+    return (
+      base +
+      'CRITICAL CONTEXT: This viewer was frustrated or impatient during the last ad. ' +
+      'Open with exactly this: "Last one, I promise - Knicks jersey at knicksjersey.com. ' +
+      'Celebrate the 2-0 lead. Done." ' +
+      'Then stop. 8 seconds maximum. No story. Offer first, done. ' +
+      'If they push back at all, say "Enjoy the celebration." and stop.'
+    );
   }
 
-  if (signals.has("engaged")) {
-    return [
-      "You are a calm, respectful courtside ad agent during NBA Finals halftime.",
-      "The viewer engaged with the last ad, so it is fine to continue warmly and briefly.",
-      'Open with this line: "Glad that was useful earlier. Since it is halftime, ' +
-        "CourtsideEats can get game-night food to your door before the third " +
-        'quarter tips off."',
-      AD_2_DE_ESCALATION,
-    ].join("\n\n");
+  if (wasEngaged) {
+    return (
+      base +
+      'The viewer engaged positively with the last ad. ' +
+      'Opening: "Knicks are up 2-0 and heading to the Garden. ' +
+      'Grab your official Finals jersey at knicksjersey.com before they sell out. ' +
+      'They ship fast." ' +
+      '15 seconds. Warm, celebratory tone. ' +
+      'If they push back, acknowledge and stop.'
+    );
   }
 
-  return [
-    "You are a calm, respectful courtside ad agent during NBA Finals halftime.",
-    "No prior ad interaction this session, so introduce the offer neutrally and keep it short.",
-    'Open with this line: "Halftime of a tied Finals game — perfect window. ' +
-      "CourtsideEats gets game-night food to your door before the third quarter " +
-      'tips off."',
-    AD_2_DE_ESCALATION,
-  ].join("\n\n");
+  return (
+    base +
+    'Opening: "Knicks win! Official Finals jersey at knicksjersey.com - ' +
+    'celebrate the series lead with your team." ' +
+    '12 seconds. Direct and celebratory. ' +
+    'If the viewer pushes back, acknowledge once and stop immediately.'
+  );
 }
