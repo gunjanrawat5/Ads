@@ -14,6 +14,7 @@ import { tavusError, tavusLog, tavusWarn } from "../../lib/tavusDebug";
 import {
   CLOSING_LINE_PATTERN,
   isMockTavusUrl,
+  PURCHASE_INTENT_PATTERN,
   RAVEN_SIGNAL_MAP,
   STOP_UTTERANCE_PATTERN,
 } from "../../lib/tavus";
@@ -35,6 +36,8 @@ type TavusAgentPanelProps = {
   onStopRequested?: () => void;
   /** Parent signaled stop (e.g. Skip button) — wait for closing line then dismiss. */
   stopPending?: boolean;
+  /** Min replica speech duration (seconds) before natural-end auto-dismiss. */
+  minReplicaSpeechSeconds?: number;
 };
 
 type AgentStatus =
@@ -108,6 +111,7 @@ export function TavusAgentPanel({
   onAgentLive,
   onStopRequested,
   stopPending = false,
+  minReplicaSpeechSeconds = 5,
 }: TavusAgentPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -124,6 +128,7 @@ export function TavusAgentPanel({
   );
   const conversationIdRef = useRef<string | null>(null);
   const agentLiveNotifiedRef = useRef(false);
+  const purchaseIntentRef = useRef(false);
   const callRef = useRef<DailyCall | null>(null);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("connecting");
   const [statusHint, setStatusHint] = useState<string>(
@@ -301,6 +306,7 @@ export function TavusAgentPanel({
       closingLinePendingRef.current = false;
       closingLineHeardRef.current = false;
       conversationIdRef.current = null;
+      purchaseIntentRef.current = false;
 
       await destroyDailyCall();
       if (cancelled) {
@@ -427,6 +433,16 @@ export function TavusAgentPanel({
           }
 
           if (
+            utterance.role === "user" &&
+            PURCHASE_INTENT_PATTERN.test(utterance.speech)
+          ) {
+            purchaseIntentRef.current = true;
+            tavusLog("Tavus user purchase intent", {
+              speech: utterance.speech,
+            });
+          }
+
+          if (
             utterance.role === "replica" &&
             closingLinePendingRef.current &&
             CLOSING_LINE_PATTERN.test(utterance.speech)
@@ -465,10 +481,14 @@ export function TavusAgentPanel({
           !closingLinePendingRef.current &&
           !stopPendingRef.current &&
           typeof stoppedProps?.duration === "number" &&
-          stoppedProps.duration >= 8 &&
+          stoppedProps.duration >=
+            (purchaseIntentRef.current ? 2 : minReplicaSpeechSeconds) &&
           stoppedProps.interrupted === false
         ) {
-          tavusLog("replica finished full pitch — auto-dismissing ad");
+          tavusLog("replica finished speaking — auto-dismissing ad", {
+            duration: stoppedProps.duration,
+            purchaseIntent: purchaseIntentRef.current,
+          });
           dismissAfterClosingLine();
         }
 

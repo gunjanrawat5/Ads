@@ -39,6 +39,21 @@ export type ArcEntry = {
   timestamp: string;
 };
 
+/** How AD_SLOT_2 adapts based on AD_SLOT_1 arc entries. */
+export type Ad2ArcTier = "frustrated" | "engaged" | "default";
+
+/** Classified emotion signals stored by /api/feedback (FrictionAnalysis.emotionSignal). */
+const FRUSTRATED_SIGNALS = new Set(["frustrated", "annoyed", "disinterested"]);
+const RUSHED_SIGNALS = new Set(["rushed"]);
+const ENGAGED_SIGNALS = new Set(["engaged", "interested", "curious"]);
+
+const AD2_STOP_RULES =
+  'STOP RULES (critical — follow exactly): ' +
+  'If the viewer says stop, skip, enough, quit, or wants to watch the game: ' +
+  'say ONLY: "Fair — Finals jersey at knicksjersey.com. Enjoy the celebration." ' +
+  'Then stop talking immediately. The ad will end on its own. ' +
+  'Never pressure. Never guilt. Never keep pitching after stop.';
+
 export const AD_SLOT_1: AdFixture = {
   adIndex: 0,
   triggerTimeSeconds: 19,
@@ -66,75 +81,114 @@ export const AD_SLOT_1: AdFixture = {
     'say ONLY: "Fair — Nike Air Zoom, 15% off this week." then stop. ' +
     'Never pressure. Never guilt. Never keep pitching after stop or annoyance.',
   adCandidate: {
-    id: 'nike-air-zoom-anunoby',
-    productName: 'Nike Air Zoom Flight',
-    category: 'basketball_shoe',
+    id: "nike-air-zoom-anunoby",
+    productName: "Nike Air Zoom Flight",
+    category: "basketball_shoe",
     pitchAngle:
-      'The same neon green Nike Air Zoom Flight Anunoby just wore — full-length Zoom Air, ' +
-      'lightweight build for cuts and elevation. 4th of July sale: 15% off at nike.com through July 4.',
+      "The same neon green Nike Air Zoom Flight Anunoby just wore — full-length Zoom Air, " +
+      "lightweight build for cuts and elevation. 4th of July sale: 15% off at nike.com through July 4.",
     defaultLengthSeconds: 30,
     relevanceReason:
-      'Anunoby visibly wearing neon green Nike Air Zoom Flight shoes during the 19-second play.',
+      "Anunoby visibly wearing neon green Nike Air Zoom Flight shoes during the 19-second play.",
   },
 };
 
 export const AD_SLOT_2: AdFixture = {
   adIndex: 1,
   triggerTimeSeconds: 39,
-  triggerMoment: 'Final buzzer. Knicks win 105-104. 2-0 series lead.',
-  tavusContext: '', // populated at runtime by buildAd2Context()
+  triggerMoment: "Final buzzer. Knicks win 105-104. 2-0 series lead.",
+  tavusContext: "", // populated at runtime by buildAd2Context()
   adCandidate: {
-    id: 'knicks-finals-jersey',
-    productName: 'Official Knicks Finals Jersey',
-    category: 'team_jersey',
+    id: "knicks-finals-jersey",
+    productName: "Official Knicks Finals Jersey",
+    category: "team_jersey",
     pitchAngle:
-      'Celebrate the win with your team. Official Knicks jerseys at knicksjersey.com.',
-    defaultLengthSeconds: 12,
-    relevanceReason: 'Knicks win Game 2, 2-0 series lead, peak celebration moment.',
+      "Celebrate the win with your team. Official Knicks jerseys at knicksjersey.com.",
+    defaultLengthSeconds: 15,
+    relevanceReason: "Knicks win Game 2, 2-0 series lead, peak celebration moment.",
   },
 };
 
+/**
+ * Classifies AD_SLOT_1 arc entries into the tier that drives AD_SLOT_2 script and
+ * duration. Frustrated/rushed viewers get the shortest apology ad; engaged
+ * viewers get a warmer pitch with purchase-intent handling.
+ */
+export function classifyAd2Arc(arc: ArcEntry[]): Ad2ArcTier {
+  const signals = arc.map((entry) => entry.emotionSignal);
+
+  if (signals.some((signal) => FRUSTRATED_SIGNALS.has(signal))) {
+    return "frustrated";
+  }
+
+  if (signals.some((signal) => RUSHED_SIGNALS.has(signal))) {
+    return "frustrated";
+  }
+
+  if (signals.some((signal) => ENGAGED_SIGNALS.has(signal))) {
+    return "engaged";
+  }
+
+  return "default";
+}
+
+/** Auto-close fallback duration (seconds) for AD_SLOT_2 per arc tier. */
+export function getAd2DurationSeconds(arc: ArcEntry[]): number {
+  switch (classifyAd2Arc(arc)) {
+    case "frustrated":
+      return 10;
+    case "engaged":
+      return 22;
+    default:
+      return 18;
+  }
+}
+
 export function buildAd2Context(arc: ArcEntry[]): string {
   const base =
-    'You are presenting a Knicks Finals Jersey ad inside a live NBA Finals broadcast. ' +
-    'The Knicks just won 105-104. Jalen Brunson hit the go-ahead free throw. ' +
-    'Wembanyama missed the buzzer-beater. Knicks lead the series 2-0. ' +
-    'The jersey is available at knicksjersey.com. ';
+    "You are presenting a Knicks Finals Jersey ad inside a live NBA Finals broadcast. " +
+    "The Knicks just won 105-104. Jalen Brunson hit the go-ahead free throw. " +
+    "Wembanyama missed the buzzer-beater. Knicks lead the series 2-0. " +
+    "Official Finals jerseys are at knicksjersey.com. ";
 
-  const wasFrustrated = arc.some(
-    (e) => e.emotionSignal === 'frustrated' || e.emotionSignal === 'annoyed',
-  );
-  const wasRushed = arc.some((e) => e.emotionSignal === 'tell_me_quickly');
-  const wasEngaged = arc.some((e) => e.emotionSignal === 'interested');
+  const tier = classifyAd2Arc(arc);
 
-  if (wasFrustrated || wasRushed) {
+  if (tier === "frustrated") {
     return (
       base +
-      'CRITICAL CONTEXT: This viewer was frustrated or impatient during the last ad. ' +
-      'Open with exactly this: "Last one, I promise - Knicks jersey at knicksjersey.com. ' +
+      "CRITICAL CONTEXT: This viewer was frustrated, skipped, or impatient during the last ad. " +
+      "Wait for them to speak first if they want to. " +
+      'Open with exactly this (~8 seconds): "Last one, I promise — Knicks Finals jersey at knicksjersey.com. ' +
       'Celebrate the 2-0 lead. Done." ' +
-      'Then stop. 8 seconds maximum. No story. Offer first, done. ' +
-      'If they push back at all, say "Enjoy the celebration." and stop.'
+      "Then stop. No story. No extra lines. Offer first, done. " +
+      'If they push back at all, say ONLY: "Enjoy the celebration." and stop. ' +
+      AD2_STOP_RULES
     );
   }
 
-  if (wasEngaged) {
+  if (tier === "engaged") {
     return (
       base +
-      'The viewer engaged positively with the last ad. ' +
-      'Opening: "Knicks are up 2-0 and heading to the Garden. ' +
-      'Grab your official Finals jersey at knicksjersey.com before they sell out. ' +
-      'They ship fast." ' +
-      '15 seconds. Warm, celebratory tone. ' +
-      'If they push back, acknowledge and stop.'
+      "CRITICAL CONTEXT: This viewer engaged positively with the last ad. " +
+      "Wait for them to speak first when possible, then deliver a ~15 second celebratory pitch: " +
+      '"Knicks are up 2-0 — grab the official Finals jersey at knicksjersey.com before they sell out. They ship fast." ' +
+      "PURCHASE INTENT (critical): If they express wanting the jersey — e.g. " +
+      '"damn I want the jersey", "I need that jersey", "where do I get one", "I want one" — ' +
+      "match their energy in one or two sentences. Example: " +
+      '"Yeah — official Finals jersey at knicksjersey.com. Grab yours and celebrate the 2-0 lead." ' +
+      "Do NOT launch into a long pitch if they already showed intent. " +
+      "Warm, celebratory tone. " +
+      AD2_STOP_RULES
     );
   }
 
   return (
     base +
-    'Opening: "Knicks win! Official Finals jersey at knicksjersey.com - ' +
+    'Wait for the viewer to speak first if they want to. ' +
+    'Opening (~12 seconds): "Knicks win! Official Finals jersey at knicksjersey.com — ' +
     'celebrate the series lead with your team." ' +
-    '12 seconds. Direct and celebratory. ' +
-    'If the viewer pushes back, acknowledge once and stop immediately.'
+    "Direct and celebratory. " +
+    "If they say they want the jersey, confirm knicksjersey.com in one short line. " +
+    AD2_STOP_RULES
   );
 }

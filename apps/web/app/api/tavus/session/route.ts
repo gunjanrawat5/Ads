@@ -5,6 +5,7 @@ import {
   AdCandidateSchema,
   VideoContextSchema,
   buildAd2Context,
+  getAd2DurationSeconds,
 } from "@ads/core";
 import {
   getArcEntries,
@@ -56,11 +57,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   // adapts the pitch. Both slot paths override any passed openingScript /
   // tavusContext. When adIndex is absent we keep the legacy openingScript path.
   let effectiveScript = openingScript;
+  let adDurationSeconds: number | undefined;
   if (adIndex === 1) {
     const arc = await getArcEntries(sessionId);
     effectiveScript = buildAd2Context(arc);
+    adDurationSeconds = getAd2DurationSeconds(arc);
   } else if (adIndex === 0) {
     effectiveScript = AD_SLOT_1.tavusContext;
+    adDurationSeconds = AD_SLOT_1.adCandidate.defaultLengthSeconds;
   }
 
   try {
@@ -72,7 +76,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       conversationalContext:
         adIndex === 0 || adIndex === 1 ? effectiveScript : undefined,
     });
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, adDurationSeconds });
   } catch (err) {
     console.warn("[/api/tavus/session] provider failed", {
       provider: provider.name,
@@ -81,13 +85,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Demo-critical route: never 500. Degrade to the scripted mock agent so
     // the frontend keeps the Tavus-style experience intact (AGENTS.md §9.1).
     if (fallbacksEnabled) {
-      return NextResponse.json(mockResult(sessionId, effectiveScript), {
-        headers: { "x-fallback-used": "true" },
-      });
+      return NextResponse.json(
+        { ...mockResult(sessionId, effectiveScript), adDurationSeconds },
+        {
+          headers: { "x-fallback-used": "true" },
+        },
+      );
     }
-    return NextResponse.json(mockResult(sessionId, effectiveScript), {
-      status: 200,
-      headers: { "x-fallback-used": "true" },
-    });
+    return NextResponse.json(
+      { ...mockResult(sessionId, effectiveScript), adDurationSeconds },
+      {
+        status: 200,
+        headers: { "x-fallback-used": "true" },
+      },
+    );
   }
 }

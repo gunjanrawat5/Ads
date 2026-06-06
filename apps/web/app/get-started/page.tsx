@@ -59,6 +59,13 @@ function formatTime(timeInSeconds: number) {
     .padStart(2, "0")}`;
 }
 
+function adDurationSeconds(activeAd: ActiveAd): number {
+  return (
+    activeAd.session.adDurationSeconds ??
+    activeAd.slot.adCandidate.defaultLengthSeconds
+  );
+}
+
 export default function GetStartedPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const firedRef = useRef<Set<number>>(new Set());
@@ -249,7 +256,7 @@ export default function GetStartedPage() {
     }
 
     scheduleAdClose(
-      activeAd.slot.adCandidate.defaultLengthSeconds + 5,
+      adDurationSeconds(activeAd) + 8,
       `slot-${activeAd.slot.adIndex}-full-duration`,
     );
   }, [activeAd, scheduleAdClose]);
@@ -259,9 +266,11 @@ export default function GetStartedPage() {
       return;
     }
 
+    const duration = adDurationSeconds(activeAd);
+
     // Schedule immediately as a fallback if the agent never reports live.
     scheduleAdClose(
-      activeAd.slot.adCandidate.defaultLengthSeconds + 20,
+      duration + 25,
       `slot-${activeAd.slot.adIndex}-join-fallback`,
     );
     // Intentionally no cleanup — React Strict Mode remounts were clearing the
@@ -405,6 +414,9 @@ export default function GetStartedPage() {
                                 onStopRequested={handleStopRequested}
                                 onAgentLive={scheduleFullAdClose}
                                 stopPending={stopPending}
+                                minReplicaSpeechSeconds={
+                                  adDurationSeconds(activeAd) <= 12 ? 3 : 5
+                                }
                               />
 
                               <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[#f3e8a6]/30 pt-3">
@@ -446,7 +458,7 @@ export default function GetStartedPage() {
                 </div>
                 <p className="max-w-md text-base leading-relaxed sm:text-xl">
                   {activeAd
-                    ? `Ad runs up to ${activeAd.slot.adCandidate.defaultLengthSeconds}s. Say "stop" to hear the closing line and auto-dismiss.`
+                    ? `Ad runs up to ${adDurationSeconds(activeAd)}s. Say "stop" for the closing line, then auto-dismiss.`
                     : adLoading
                       ? "Tavus agent is starting…"
                       : "Ads auto-trigger at 0:19 and 0:39 based on what happens in the clip."}

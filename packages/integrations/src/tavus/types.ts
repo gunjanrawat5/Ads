@@ -28,6 +28,8 @@ export interface TavusSessionResult {
   meetingToken?: string;
   fallbackAgentScript?: string;
   status: "ready" | "fallback_ready";
+  /** Frontend auto-close fallback; arc-aware for AD_SLOT_2. */
+  adDurationSeconds?: number;
 }
 
 export interface TavusProvider {
