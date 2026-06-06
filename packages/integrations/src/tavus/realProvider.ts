@@ -1,4 +1,8 @@
 import {
+  buildConversationalContext,
+  resolvePersona,
+} from "./personaConfig";
+import {
   TAVUS_PERSONA_PERCEPTION_LAYER,
   type TavusProvider,
   type TavusSessionInput,
@@ -75,11 +79,22 @@ export class RealTavusProvider implements TavusProvider {
   async createSession(
     input: TavusSessionInput,
   ): Promise<TavusSessionResult> {
+    // Route the ad category to a persona. Per-category ids
+    // (TAVUS_PERSONA_ID_{KEY}) win; fall back to the global TAVUS_PERSONA_ID /
+    // TAVUS_REPLICA_ID when a category-specific id is not configured.
+    const persona = resolvePersona(input.adCandidate.category);
+    const conversationalContext = buildConversationalContext({
+      persona,
+      videoContext: input.videoContext,
+      adCandidate: input.adCandidate,
+      openingScript: input.openingScript,
+    });
+
     const body = {
-      replica_id: this.options.replicaId,
-      persona_id: this.options.personaId,
+      replica_id: persona.replicaId || this.options.replicaId,
+      persona_id: persona.personaId || this.options.personaId,
       conversation_name: `ad-demo-${input.sessionId}`,
-      conversational_context: input.openingScript,
+      conversational_context: conversationalContext,
       properties: {
         max_call_duration: 180,
         enable_recording: false,
