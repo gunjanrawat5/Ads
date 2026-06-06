@@ -15,6 +15,12 @@ export {
 } from "./types";
 export { MockTavusProvider } from "./mockProvider";
 export { RealTavusProvider, buildPersonaPayload } from "./realProvider";
+export {
+  PERSONA_CATALOG,
+  resolvePersona,
+  buildConversationalContext,
+  type AdPersonaConfig,
+} from "./personaConfig";
 
 let cached: TavusProvider | undefined;
 
