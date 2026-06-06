@@ -14,7 +14,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ads/core": "*"
+    "@ads/core": "*",
+    "@redis-iris/agent-memory": "^0.0.5"
   },
   "devDependencies": {
     "typescript": "^5",

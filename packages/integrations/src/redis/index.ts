@@ -1,29 +1,14 @@
-import type { ArcEntry, PreferenceMemory } from "@ads/core";
-import { getAgentMemoryProvider } from "./providerFactory";
-
 export {
+  isRedisIrisConfigured,
   storeArcEntry,
   getArcEntries,
-  _resetArcStore,
-} from "./arcProvider";
+  storePreference,
+  getPreferences,
+} from "./memoryWrappers";
+export { InMemoryProvider, getSessionProvider, _resetInMemoryStore } from "./inMemoryProvider";
 export {
   getAgentMemoryProvider,
   getMemoryProvider,
   _resetAgentMemoryProvider,
 } from "./providerFactory";
-export type { AgentMemoryProviderLike } from "./providerFactory";
-export { AgentMemoryProvider } from "./agentMemoryProvider";
-export { InMemoryProvider } from "./inMemoryProvider";
-
-export async function storePreference(
-  sessionId: string,
-  pref: PreferenceMemory,
-): Promise<void> {
-  return getAgentMemoryProvider().storePreference(sessionId, pref);
-}
-
-export async function getPreferences(
-  sessionId: string,
-): Promise<PreferenceMemory[]> {
-  return getAgentMemoryProvider().getPreferences(sessionId);
-}
+export { _resetRedisIrisClient } from "./redisIrisProvider";

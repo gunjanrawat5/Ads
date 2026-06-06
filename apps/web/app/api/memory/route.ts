@@ -3,6 +3,7 @@ import type { MemoryUpdate, PreferenceMemory } from "@ads/core";
 import {
   getAgentMemoryProvider,
   getPreferences,
+  isRedisIrisConfigured,
 } from "@ads/integrations";
 import { apiError, getSessionId } from "../_lib/http";
 
@@ -10,7 +11,7 @@ interface MemoryGetResponse {
   sessionId: string;
   preferences: PreferenceMemory[];
   currentMode: MemoryUpdate["currentMode"];
-  provider: "redis_agent_memory" | "memory" | "local_demo";
+  provider: "redis_iris" | "memory" | "local_demo";
 }
 
 interface MemoryDeleteResponse {
@@ -37,7 +38,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       sessionId,
       preferences,
       currentMode,
-      provider: provider.name,
+      provider: isRedisIrisConfigured() ? "redis_iris" : "memory",
     };
     return NextResponse.json(body);
   } catch (err) {

@@ -87,9 +87,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
 
     for (const pref of memoryUpdate.allowedPreferences) {
-      if (pref.safetyStatus === "allowed") {
-        await storePreference(sessionId, pref);
-      }
+      await storePreference(sessionId, pref);
     }
   } catch (err) {
     providerFailed = true;

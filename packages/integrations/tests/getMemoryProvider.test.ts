@@ -2,15 +2,17 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   _resetAgentMemoryProvider,
   getAgentMemoryProvider,
+  isRedisIrisConfigured,
 } from "../src/redis";
 
 const KEYS = [
-  "REDIS_AGENT_MEMORY_URL",
-  "REDIS_AGENT_MEMORY_TOKEN",
+  "REDIS_IRIS_SERVER_URL",
+  "REDIS_IRIS_STORE_ID",
+  "REDIS_IRIS_API_KEY",
   "NEXT_PUBLIC_REDIS_ENABLED",
 ] as const;
 
-describe("getAgentMemoryProvider", () => {
+describe("isRedisIrisConfigured", () => {
   const original: Partial<Record<(typeof KEYS)[number], string>> = {};
 
   beforeEach(() => {
@@ -32,23 +34,39 @@ describe("getAgentMemoryProvider", () => {
     _resetAgentMemoryProvider();
   });
 
-  it("falls back to InMemoryProvider when REDIS_AGENT_MEMORY_URL is unset", () => {
-    const provider = getAgentMemoryProvider();
-    expect(provider.name).toBe("memory");
+  it("returns false when Redis Iris env vars are unset", () => {
+    expect(isRedisIrisConfigured()).toBe(false);
   });
 
-  it("falls back to InMemoryProvider when NEXT_PUBLIC_REDIS_ENABLED is not 'true' even if URL present", () => {
-    process.env.REDIS_AGENT_MEMORY_URL = "http://localhost:8000";
+  it("returns false when NEXT_PUBLIC_REDIS_ENABLED is not 'true' even if creds present", () => {
+    process.env.REDIS_IRIS_SERVER_URL = "https://iris.example.com";
+    process.env.REDIS_IRIS_STORE_ID = "store-1";
+    process.env.REDIS_IRIS_API_KEY = "key-1";
     process.env.NEXT_PUBLIC_REDIS_ENABLED = "false";
-    const provider = getAgentMemoryProvider();
-    expect(provider.name).toBe("memory");
+    expect(isRedisIrisConfigured()).toBe(false);
   });
 
-  it("returns AgentMemoryProvider when URL is set and NEXT_PUBLIC_REDIS_ENABLED is 'true'", () => {
-    process.env.REDIS_AGENT_MEMORY_URL = "http://localhost:8000";
+  it("returns true when all Redis Iris env vars are set and enabled", () => {
+    process.env.REDIS_IRIS_SERVER_URL = "https://iris.example.com";
+    process.env.REDIS_IRIS_STORE_ID = "store-1";
+    process.env.REDIS_IRIS_API_KEY = "key-1";
     process.env.NEXT_PUBLIC_REDIS_ENABLED = "true";
+    expect(isRedisIrisConfigured()).toBe(true);
+  });
+});
+
+describe("getAgentMemoryProvider", () => {
+  beforeEach(() => {
+    _resetAgentMemoryProvider();
+  });
+
+  afterEach(() => {
+    _resetAgentMemoryProvider();
+  });
+
+  it("returns the in-memory session provider", () => {
     const provider = getAgentMemoryProvider();
-    expect(provider.name).toBe("redis_agent_memory");
+    expect(provider.name).toBe("memory");
   });
 
   it("returns the same instance across calls (singleton)", () => {

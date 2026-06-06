@@ -19,9 +19,9 @@ function emptyRecord(): SessionRecord {
 }
 
 /**
- * Process-local fallback when REDIS_AGENT_MEMORY_URL is unset or unreachable.
- * Implements the Agent Memory Server surface (arc + preferences) plus session
- * state used by next-ad and interruption mode.
+ * Process-local fallback when Redis Iris is unset or unreachable. Session
+ * state (feedback log, interruption mode, next-ad cache) shares the same store
+ * as arc entries and preferences.
  */
 export class InMemoryProvider {
   readonly name = "memory" as const;
@@ -48,8 +48,6 @@ export class InMemoryProvider {
     sessionId: string,
     pref: PreferenceMemory,
   ): Promise<void> {
-    if (pref.safetyStatus !== "allowed") return;
-
     const record = this.record(sessionId);
     const seen = new Set(record.preferences.map((p) => p.label.toLowerCase()));
     if (!seen.has(pref.label.toLowerCase())) {
@@ -91,4 +89,42 @@ export class InMemoryProvider {
   async clear(sessionId: string): Promise<void> {
     this.store.delete(sessionId);
   }
+}
+
+let sessionSingleton: InMemoryProvider | undefined;
+
+export function getSessionProvider(): InMemoryProvider {
+  if (!sessionSingleton) {
+    sessionSingleton = new InMemoryProvider();
+  }
+  return sessionSingleton;
+}
+
+export async function storeArcEntry(
+  sessionId: string,
+  entry: ArcEntry,
+): Promise<void> {
+  return getSessionProvider().storeArcEntry(sessionId, entry);
+}
+
+export async function getArcEntries(sessionId: string): Promise<ArcEntry[]> {
+  return getSessionProvider().getArcEntries(sessionId);
+}
+
+export async function storePreference(
+  sessionId: string,
+  pref: PreferenceMemory,
+): Promise<void> {
+  return getSessionProvider().storePreference(sessionId, pref);
+}
+
+export async function getPreferences(
+  sessionId: string,
+): Promise<PreferenceMemory[]> {
+  return getSessionProvider().getPreferences(sessionId);
+}
+
+/** Test-only: forget the in-memory session singleton. */
+export function _resetInMemoryStore(): void {
+  sessionSingleton = undefined;
 }
