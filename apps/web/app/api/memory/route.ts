@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import type { MemoryUpdate, PreferenceMemory } from "@ads/core";
-import { getMemoryProvider } from "@ads/integrations";
+import {
+  getAgentMemoryProvider,
+  getPreferences,
+} from "@ads/integrations";
 import { apiError, getSessionId } from "../_lib/http";
 
 interface MemoryGetResponse {
   sessionId: string;
   preferences: PreferenceMemory[];
   currentMode: MemoryUpdate["currentMode"];
-  provider: "redis" | "memory" | "local_demo";
+  provider: "redis_agent_memory" | "memory" | "local_demo";
 }
 
 interface MemoryDeleteResponse {
@@ -21,13 +24,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     return apiError("VALIDATION_ERROR", "sessionId query param is required.", 400);
   }
 
-  const provider = getMemoryProvider();
+  const provider = getAgentMemoryProvider();
   const fallbacksEnabled =
     process.env.ENABLE_PROVIDER_FALLBACKS !== "false";
 
   try {
     const [preferences, currentMode] = await Promise.all([
-      provider.getPreferences(sessionId),
+      getPreferences(sessionId),
       provider.getSessionMode(sessionId),
     ]);
     const body: MemoryGetResponse = {
@@ -61,7 +64,7 @@ export async function DELETE(request: Request): Promise<NextResponse> {
     return apiError("VALIDATION_ERROR", "sessionId query param is required.", 400);
   }
 
-  const provider = getMemoryProvider();
+  const provider = getAgentMemoryProvider();
   const fallbacksEnabled =
     process.env.ENABLE_PROVIDER_FALLBACKS !== "false";
 

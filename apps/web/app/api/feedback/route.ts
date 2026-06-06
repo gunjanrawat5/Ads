@@ -11,9 +11,12 @@ import {
   type AgentResponse,
   type FrictionAnalysis,
   type MemoryUpdate,
-  type PreferenceMemory,
 } from "@ads/core";
-import { appendArcEntry, getMemoryProvider } from "@ads/integrations";
+import {
+  getAgentMemoryProvider,
+  storeArcEntry,
+  storePreference,
+} from "@ads/integrations";
 import { apiError, parseJson } from "../_lib/http";
 
 const FeedbackRequestSchema = z.object({
@@ -30,20 +33,6 @@ interface FeedbackResponse {
   memoryUpdate: MemoryUpdate;
 }
 
-function mergePreferences(
-  existing: PreferenceMemory[],
-  incoming: PreferenceMemory[],
-): PreferenceMemory[] {
-  const seen = new Set(existing.map((p) => p.label.toLowerCase()));
-  const merged = [...existing];
-  for (const pref of incoming) {
-    if (!seen.has(pref.label.toLowerCase())) {
-      seen.add(pref.label.toLowerCase());
-      merged.push(pref);
-    }
-  }
-  return merged;
-}
 
 export async function POST(request: Request): Promise<NextResponse> {
   const parsed = await parseJson(request, FeedbackRequestSchema);
@@ -81,26 +70,27 @@ export async function POST(request: Request): Promise<NextResponse> {
     ],
   };
 
-  const provider = getMemoryProvider();
+  const provider = getAgentMemoryProvider();
   const fallbacksEnabled =
     process.env.ENABLE_PROVIDER_FALLBACKS !== "false";
   let providerFailed = false;
 
   try {
     await provider.appendFeedback(sessionId, feedback);
-    const existing = await provider.getPreferences(sessionId);
-    const merged = mergePreferences(existing, memoryUpdate.allowedPreferences);
-    await provider.savePreferences(sessionId, merged);
     await provider.setSessionMode(sessionId, memoryUpdate.currentMode);
 
-    // Record this interaction in the broadcast arc so AD_SLOT_2 can adapt.
-    // Feedback arrives while the first ad slot is showing, so adIndex is 0.
-    await appendArcEntry(sessionId, {
+    await storeArcEntry(sessionId, {
       adIndex: 0,
       emotionSignal: analysis.emotionSignal,
       adCategory: adCategory ?? "unknown",
       timestamp: new Date().toISOString(),
     });
+
+    for (const pref of memoryUpdate.allowedPreferences) {
+      if (pref.safetyStatus === "allowed") {
+        await storePreference(sessionId, pref);
+      }
+    }
   } catch (err) {
     providerFailed = true;
     console.warn("[/api/feedback] provider write failed", {

@@ -1,23 +1,29 @@
 import type {
+  ArcEntry,
   MemoryUpdate,
   NextAdDecision,
   PreferenceMemory,
   ViewerFeedback,
 } from "@ads/core";
-import type { MemoryProvider } from "./types";
 
 interface SessionRecord {
   mode: MemoryUpdate["currentMode"];
   preferences: PreferenceMemory[];
+  arc: ArcEntry[];
   feedback: ViewerFeedback[];
   nextAd?: NextAdDecision;
 }
 
 function emptyRecord(): SessionRecord {
-  return { mode: "normal", preferences: [], feedback: [] };
+  return { mode: "normal", preferences: [], arc: [], feedback: [] };
 }
 
-export class InMemoryProvider implements MemoryProvider {
+/**
+ * Process-local fallback when REDIS_AGENT_MEMORY_URL is unset or unreachable.
+ * Implements the Agent Memory Server surface (arc + preferences) plus session
+ * state used by next-ad and interruption mode.
+ */
+export class InMemoryProvider {
   readonly name = "memory" as const;
   private readonly store = new Map<string, SessionRecord>();
 
@@ -30,15 +36,29 @@ export class InMemoryProvider implements MemoryProvider {
     return r;
   }
 
-  async getPreferences(sessionId: string): Promise<PreferenceMemory[]> {
-    return [...this.record(sessionId).preferences];
+  async storeArcEntry(sessionId: string, entry: ArcEntry): Promise<void> {
+    this.record(sessionId).arc.push(entry);
   }
 
-  async savePreferences(
+  async getArcEntries(sessionId: string): Promise<ArcEntry[]> {
+    return [...this.record(sessionId).arc];
+  }
+
+  async storePreference(
     sessionId: string,
-    preferences: PreferenceMemory[],
+    pref: PreferenceMemory,
   ): Promise<void> {
-    this.record(sessionId).preferences = [...preferences];
+    if (pref.safetyStatus !== "allowed") return;
+
+    const record = this.record(sessionId);
+    const seen = new Set(record.preferences.map((p) => p.label.toLowerCase()));
+    if (!seen.has(pref.label.toLowerCase())) {
+      record.preferences.push(pref);
+    }
+  }
+
+  async getPreferences(sessionId: string): Promise<PreferenceMemory[]> {
+    return [...this.record(sessionId).preferences];
   }
 
   async appendFeedback(

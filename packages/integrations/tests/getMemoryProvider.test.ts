@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  _resetMemoryProvider,
-  getMemoryProvider,
+  _resetAgentMemoryProvider,
+  getAgentMemoryProvider,
 } from "../src/redis";
 
 const KEYS = [
-  "UPSTASH_REDIS_REST_URL",
-  "UPSTASH_REDIS_REST_TOKEN",
+  "REDIS_AGENT_MEMORY_URL",
+  "REDIS_AGENT_MEMORY_TOKEN",
   "NEXT_PUBLIC_REDIS_ENABLED",
 ] as const;
 
-describe("getMemoryProvider", () => {
+describe("getAgentMemoryProvider", () => {
   const original: Partial<Record<(typeof KEYS)[number], string>> = {};
 
   beforeEach(() => {
@@ -18,7 +18,7 @@ describe("getMemoryProvider", () => {
       original[key] = process.env[key];
       delete process.env[key];
     }
-    _resetMemoryProvider();
+    _resetAgentMemoryProvider();
   });
 
   afterEach(() => {
@@ -29,25 +29,31 @@ describe("getMemoryProvider", () => {
         process.env[key] = original[key];
       }
     }
-    _resetMemoryProvider();
+    _resetAgentMemoryProvider();
   });
 
-  it("falls back to InMemoryProvider when UPSTASH env vars are unset", () => {
-    const provider = getMemoryProvider();
+  it("falls back to InMemoryProvider when REDIS_AGENT_MEMORY_URL is unset", () => {
+    const provider = getAgentMemoryProvider();
     expect(provider.name).toBe("memory");
   });
 
-  it("falls back to InMemoryProvider when NEXT_PUBLIC_REDIS_ENABLED is not 'true' even if creds present", () => {
-    process.env.UPSTASH_REDIS_REST_URL = "https://example.upstash.io";
-    process.env.UPSTASH_REDIS_REST_TOKEN = "fake-token";
+  it("falls back to InMemoryProvider when NEXT_PUBLIC_REDIS_ENABLED is not 'true' even if URL present", () => {
+    process.env.REDIS_AGENT_MEMORY_URL = "http://localhost:8000";
     process.env.NEXT_PUBLIC_REDIS_ENABLED = "false";
-    const provider = getMemoryProvider();
+    const provider = getAgentMemoryProvider();
     expect(provider.name).toBe("memory");
+  });
+
+  it("returns AgentMemoryProvider when URL is set and NEXT_PUBLIC_REDIS_ENABLED is 'true'", () => {
+    process.env.REDIS_AGENT_MEMORY_URL = "http://localhost:8000";
+    process.env.NEXT_PUBLIC_REDIS_ENABLED = "true";
+    const provider = getAgentMemoryProvider();
+    expect(provider.name).toBe("redis_agent_memory");
   });
 
   it("returns the same instance across calls (singleton)", () => {
-    const a = getMemoryProvider();
-    const b = getMemoryProvider();
+    const a = getAgentMemoryProvider();
+    const b = getAgentMemoryProvider();
     expect(a).toBe(b);
   });
 });

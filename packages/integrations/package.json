@@ -14,8 +14,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ads/core": "*",
-    "@upstash/redis": "^1.34.3"
+    "@ads/core": "*"
   },
   "devDependencies": {
     "typescript": "^5",
