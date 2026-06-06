@@ -601,10 +601,6 @@ export function TavusAgentPanel({
         <p className="mb-2 line-clamp-2 text-xs leading-relaxed text-[#fff8d6]/80">
           {triggerMoment}
         </p>
-        <p className="mb-2 text-[10px] leading-relaxed text-[#fff8d6]/60 sm:text-xs">
-          {statusHint} Open DevTools → filter console by{" "}
-          <span className="text-[#7bdff6]">TavusAd</span>.
-        </p>
         <div className="relative min-h-[12rem] flex-1 overflow-hidden bg-black">
           <video
             ref={videoRef}
