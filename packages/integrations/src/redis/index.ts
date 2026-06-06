@@ -6,6 +6,11 @@ export type { MemoryProvider } from "./types";
 export { TTL_SECONDS, key } from "./types";
 export { InMemoryProvider } from "./inMemoryProvider";
 export { UpstashProvider } from "./upstashProvider";
+export {
+  appendArcEntry,
+  getArcEntries,
+  _resetArcStore,
+} from "./arcProvider";
 
 let cached: MemoryProvider | undefined;
 
