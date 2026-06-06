@@ -20,10 +20,9 @@ export default function Home() {
                 aria-label="Primary navigation"
                 className="flex flex-wrap items-center gap-6 text-lg font-black uppercase lg:gap-9"
               >
-                <a href="#about" className="hover:text-neo-accent">
+                <a href="/about" className="hover:text-neo-accent">
                   About
                 </a>
-            
               </nav>
 
               <div className="flex items-center gap-6 lg:gap-10">

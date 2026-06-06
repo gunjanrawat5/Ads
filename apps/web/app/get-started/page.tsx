@@ -94,7 +94,7 @@ export default function GetStartedPage() {
                 <div className="relative flex-1 overflow-hidden border-2 border-[#f3e8a6] bg-black">
                   <video
                     ref={videoRef}
-                    src="/video.mp4"
+                    src="/Knicks-Video.mp4"
                     className="h-full min-h-[13rem] w-full object-cover"
                     controls
                     playsInline
