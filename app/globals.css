@@ -1,26 +1,212 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fffdf5;
+  --foreground: #000000;
+  --accent: #ff6b6b;
+  --secondary: #ffd93d;
+  --muted: #c4b5fd;
+  --paper-shadow: 8px 8px 0px 0px #000;
+  --card-shadow: 12px 12px 0px 0px #000;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-neo-accent: var(--accent);
+  --color-neo-secondary: var(--secondary);
+  --color-neo-muted: var(--muted);
+  --font-sans: var(--font-space-grotesk);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+  overflow: hidden;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-space-grotesk), sans-serif;
+  font-weight: 700;
+  overflow: hidden;
+}
+
+a,
+button {
+  transition-duration: 120ms;
+  transition-timing-function: linear;
+}
+
+::selection {
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.neo-grid {
+  background-color: var(--background);
+  background-image:
+    linear-gradient(to right, rgb(0 0 0 / 0.1) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(0 0 0 / 0.1) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.neo-halftone {
+  background-image: radial-gradient(#000 1.5px, transparent 1.5px);
+  background-size: 20px 20px;
+}
+
+.neo-dots {
+  background-color: var(--background);
+  background-image: radial-gradient(#000 1.8px, transparent 1.8px);
+  background-size: 24px 22px;
+  background-position: 8px 8px;
+}
+
+.neo-noise {
+  position: relative;
+}
+
+.neo-noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.14;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+.neo-shadow {
+  box-shadow: var(--paper-shadow);
+}
+
+.neo-shadow-lg {
+  box-shadow: var(--card-shadow);
+}
+
+.neo-stroke {
+  color: transparent;
+  -webkit-text-stroke: 3px #000;
+}
+
+.neo-headline-text {
+  display: inline-block;
+  color: #000;
+  background-repeat: no-repeat;
+  background-position: 100% 0;
+  background-size: 220% 100%;
+  transition: transform 220ms ease-out;
+}
+
+.neo-headline-card:hover .neo-headline-text {
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    #000 0%,
+    #000 38%,
+    var(--accent) 50%,
+    #000 62%,
+    #000 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: neo-sweep 1100ms ease-out forwards;
+  transform: translateX(2px);
+}
+
+.neo-headline-card--yellow:hover .neo-headline-text {
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    #000 0%,
+    #000 38%,
+    var(--muted) 50%,
+    #000 62%,
+    #000 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: neo-sweep 1100ms ease-out forwards;
+  transform: translateX(2px);
+}
+
+@keyframes neo-sweep {
+  0% {
+    background-position: 100% 0;
+  }
+
+  100% {
+    background-position: 0 0;
+  }
+}
+
+.neo-button {
+  border: 4px solid #000;
+  box-shadow: 6px 6px 0 0 #000;
+  text-transform: uppercase;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.neo-button:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+
+.neo-card {
+  border: 4px solid #000;
+  box-shadow: var(--card-shadow);
+  transition-duration: 180ms;
+  transition-timing-function: ease-out;
+}
+
+.neo-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 16px 16px 0 0 #000;
+}
+
+.neo-input {
+  border: 4px solid #000;
+  background: #fff;
+  color: #000;
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.neo-input:focus-visible {
+  outline: none;
+  background: var(--secondary);
+  box-shadow: 4px 4px 0 0 #000;
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 10s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-duration: 0ms !important;
+  }
 }
