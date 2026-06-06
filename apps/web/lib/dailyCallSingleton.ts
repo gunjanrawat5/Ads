@@ -4,7 +4,17 @@ import { tavusError, tavusLog, tavusWarn } from "./tavusDebug";
 declare global {
   interface Window {
     __tavusDailyCallObject?: DailyCall | null;
+    __tavusSuppressEndCallback?: boolean;
   }
+}
+
+/** Suppress left-meeting → dismiss while we intentionally tear down the call. */
+export function setSuppressConversationEnd(suppress: boolean): void {
+  window.__tavusSuppressEndCallback = suppress;
+}
+
+export function isConversationEndSuppressed(): boolean {
+  return window.__tavusSuppressEndCallback === true;
 }
 
 /** Tear down the singleton Daily call object (Tavus embed docs pattern). */
@@ -15,11 +25,14 @@ export async function destroyDailyCall(): Promise<void> {
   }
 
   tavusLog("destroying Daily call object");
+  setSuppressConversationEnd(true);
   try {
     await call.leave();
     await call.destroy();
   } catch (err) {
     tavusWarn("destroy Daily call failed (may already be gone)", err);
+  } finally {
+    setSuppressConversationEnd(false);
   }
 
   window.__tavusDailyCallObject = null;

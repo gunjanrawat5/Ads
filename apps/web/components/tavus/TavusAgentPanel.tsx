@@ -8,9 +8,15 @@ import {
   destroyDailyCall,
   getDailyCall,
   getReplicaParticipant,
+  isConversationEndSuppressed,
 } from "../../lib/dailyCallSingleton";
 import { tavusError, tavusLog, tavusWarn } from "../../lib/tavusDebug";
-import { isMockTavusUrl, RAVEN_SIGNAL_MAP } from "../../lib/tavus";
+import {
+  CLOSING_LINE_PATTERN,
+  isMockTavusUrl,
+  RAVEN_SIGNAL_MAP,
+  STOP_UTTERANCE_PATTERN,
+} from "../../lib/tavus";
 
 const VIEWER_NAME = "Viewer";
 
@@ -23,8 +29,12 @@ type TavusAgentPanelProps = {
   triggerMoment: string;
   onPerceptionSignal?: (buttonSignal: string) => void;
   onConversationEnd?: () => void;
+  /** Fired when the replica is live — parent can start the full-ad countdown. */
+  onAgentLive?: () => void;
   /** Fired when the viewer says stop/skip (browser speech recognition). */
   onStopRequested?: () => void;
+  /** Parent signaled stop (e.g. Skip button) — wait for closing line then dismiss. */
+  stopPending?: boolean;
 };
 
 type AgentStatus =
@@ -56,6 +66,36 @@ function parsePerceptionSignal(data: unknown): string | null {
   return RAVEN_SIGNAL_MAP[toolName] ?? null;
 }
 
+function utteranceSpeech(data: Record<string, unknown>): {
+  role: string;
+  speech: string;
+  isFinal: boolean;
+} | null {
+  const eventType =
+    typeof data.event_type === "string" ? data.event_type : "";
+  if (!eventType.includes("utterance")) {
+    return null;
+  }
+
+  const props = data.properties;
+  if (!props || typeof props !== "object") {
+    return null;
+  }
+
+  const record = props as Record<string, unknown>;
+  const role = typeof record.role === "string" ? record.role : "";
+  const speech = typeof record.speech === "string" ? record.speech.trim() : "";
+  if (!role || !speech) {
+    return null;
+  }
+
+  const isFinal =
+    eventType === "conversation.utterance" ||
+    (eventType === "conversation.utterance.streaming" && record.final === true);
+
+  return { role, speech, isFinal };
+}
+
 export function TavusAgentPanel({
   conversationUrl,
   meetingToken,
@@ -65,14 +105,25 @@ export function TavusAgentPanel({
   triggerMoment,
   onPerceptionSignal,
   onConversationEnd,
+  onAgentLive,
   onStopRequested,
+  stopPending = false,
 }: TavusAgentPanelProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const onPerceptionRef = useRef(onPerceptionSignal);
   const onConversationEndRef = useRef(onConversationEnd);
+  const onAgentLiveRef = useRef(onAgentLive);
   const onStopRequestedRef = useRef(onStopRequested);
   const stopTriggeredRef = useRef(false);
+  const stopPendingRef = useRef(false);
+  const closingLinePendingRef = useRef(false);
+  const closingLineHeardRef = useRef(false);
+  const closingDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const conversationIdRef = useRef<string | null>(null);
+  const agentLiveNotifiedRef = useRef(false);
   const callRef = useRef<DailyCall | null>(null);
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("connecting");
   const [statusHint, setStatusHint] = useState<string>(
@@ -91,15 +142,67 @@ export function TavusAgentPanel({
   }, [onConversationEnd]);
 
   useEffect(() => {
+    onAgentLiveRef.current = onAgentLive;
+  }, [onAgentLive]);
+
+  useEffect(() => {
     onStopRequestedRef.current = onStopRequested;
   }, [onStopRequested]);
+
+  useEffect(() => {
+    stopPendingRef.current = stopPending;
+    if (stopPending) {
+      stopTriggeredRef.current = true;
+      closingLinePendingRef.current = true;
+      if (callRef.current && conversationIdRef.current) {
+        callRef.current.sendAppMessage(
+          {
+            message_type: "conversation",
+            event_type: "conversation.interrupt",
+            conversation_id: conversationIdRef.current,
+          },
+          "*",
+        );
+        tavusLog("sending conversation.interrupt (skip/stop requested)");
+      }
+    }
+  }, [stopPending]);
+
+  const dismissAfterClosingLine = () => {
+    if (closingDismissTimerRef.current) {
+      return;
+    }
+
+    tavusLog("scheduling auto-dismiss after agent speech");
+    closingDismissTimerRef.current = setTimeout(() => {
+      closingDismissTimerRef.current = null;
+      closingLinePendingRef.current = false;
+      onConversationEndRef.current?.();
+    }, 600);
+  };
+
+  const interruptReplica = (call: DailyCall) => {
+    const conversationId = conversationIdRef.current;
+    if (!conversationId) {
+      tavusWarn("cannot interrupt — conversation_id not seen yet");
+      return;
+    }
+
+    tavusLog("sending conversation.interrupt to stop replica speech");
+    call.sendAppMessage(
+      {
+        message_type: "conversation",
+        event_type: "conversation.interrupt",
+        conversation_id: conversationId,
+      },
+      "*",
+    );
+  };
 
   useEffect(() => {
     if (!useLiveEmbed) {
       return;
     }
-
-    stopTriggeredRef.current = false;
 
     type SpeechRecognitionInstance = {
       continuous: boolean;
@@ -139,10 +242,14 @@ export function TavusAgentPanel({
 
       if (
         !stopTriggeredRef.current &&
-        /\b(stop|skip|enough|quit)\b/i.test(transcript)
+        STOP_UTTERANCE_PATTERN.test(transcript)
       ) {
         stopTriggeredRef.current = true;
+        closingLinePendingRef.current = true;
         tavusLog("voice stop keyword detected", { transcript: transcript.trim() });
+        if (callRef.current) {
+          interruptReplica(callRef.current);
+        }
         onStopRequestedRef.current?.();
       }
     };
@@ -159,6 +266,10 @@ export function TavusAgentPanel({
     }
 
     return () => {
+      if (closingDismissTimerRef.current) {
+        clearTimeout(closingDismissTimerRef.current);
+        closingDismissTimerRef.current = null;
+      }
       try {
         recognition.stop();
       } catch {
@@ -184,6 +295,12 @@ export function TavusAgentPanel({
         conversationUrl,
         hasMeetingToken: Boolean(meetingToken),
       });
+
+      agentLiveNotifiedRef.current = false;
+      stopTriggeredRef.current = false;
+      closingLinePendingRef.current = false;
+      closingLineHeardRef.current = false;
+      conversationIdRef.current = null;
 
       await destroyDailyCall();
       if (cancelled) {
@@ -228,6 +345,10 @@ export function TavusAgentPanel({
           setStatusHint(
             "Agent live. If silent, say “Hi” — Tavus often waits for you to speak first.",
           );
+          if (!agentLiveNotifiedRef.current) {
+            agentLiveNotifiedRef.current = true;
+            onAgentLiveRef.current?.();
+          }
         } else {
           setAgentStatus("replica_joined_no_media");
           setStatusHint(
@@ -274,10 +395,83 @@ export function TavusAgentPanel({
       call.on("app-message", (event) => {
         tavusLog("Daily app-message (Tavus system/perception)", event?.data);
         const data = event?.data as Record<string, unknown> | undefined;
-        if (data?.event_type === "system.replica_joined") {
+        if (!data) {
+          return;
+        }
+
+        if (typeof data.conversation_id === "string") {
+          conversationIdRef.current = data.conversation_id;
+        }
+
+        if (data.event_type === "system.replica_joined") {
           tavusLog("Tavus replica_joined — agent should start speaking soon");
           setStatusHint("Replica ready. Say “Hi” if the agent stays silent.");
         }
+
+        const utterance = utteranceSpeech(data);
+        if (utterance?.isFinal) {
+          if (
+            utterance.role === "user" &&
+            STOP_UTTERANCE_PATTERN.test(utterance.speech) &&
+            !stopTriggeredRef.current
+          ) {
+            stopTriggeredRef.current = true;
+            closingLinePendingRef.current = true;
+            tavusLog("Tavus user stop utterance", {
+              speech: utterance.speech,
+            });
+            if (callRef.current) {
+              interruptReplica(callRef.current);
+            }
+            onStopRequestedRef.current?.();
+          }
+
+          if (
+            utterance.role === "replica" &&
+            closingLinePendingRef.current &&
+            CLOSING_LINE_PATTERN.test(utterance.speech)
+          ) {
+            closingLineHeardRef.current = true;
+            tavusLog("Tavus replica closing line", {
+              speech: utterance.speech,
+            });
+          }
+        }
+
+        const eventType =
+          typeof data.event_type === "string" ? data.event_type : "";
+        const stoppedProps =
+          data.properties && typeof data.properties === "object"
+            ? (data.properties as Record<string, unknown>)
+            : null;
+        const isReplicaStopped =
+          eventType === "conversation.replica.stopped_speaking" ||
+          (eventType === "conversation.stopped_speaking" &&
+            stoppedProps?.role === "replica");
+
+        if (
+          isReplicaStopped &&
+          closingLinePendingRef.current &&
+          closingLineHeardRef.current
+        ) {
+          tavusLog("closing line finished — auto-dismissing ad", {
+            interrupted: stoppedProps?.interrupted,
+          });
+          dismissAfterClosingLine();
+        }
+
+        if (
+          isReplicaStopped &&
+          !closingLinePendingRef.current &&
+          !stopPendingRef.current &&
+          typeof stoppedProps?.duration === "number" &&
+          stoppedProps.duration >= 8 &&
+          stoppedProps.interrupted === false
+        ) {
+          tavusLog("replica finished full pitch — auto-dismissing ad");
+          dismissAfterClosingLine();
+        }
+
         const signal = parsePerceptionSignal(event?.data);
         if (signal) {
           tavusLog("Raven perception mapped to feedback", { signal });
@@ -295,14 +489,20 @@ export function TavusAgentPanel({
       });
       call.on("left-meeting", () => {
         tavusLog("Daily event: left-meeting — conversation ended");
-        onConversationEndRef.current?.();
+        if (!isConversationEndSuppressed()) {
+          onConversationEndRef.current?.();
+        }
       });
       call.on("participant-left", (event) => {
         tavusLog("Daily event: participant-left", {
           local: event?.participant?.local,
           userName: event?.participant?.user_name,
         });
-        if (event?.participant && !event.participant.local) {
+        if (
+          event?.participant &&
+          !event.participant.local &&
+          !isConversationEndSuppressed()
+        ) {
           onConversationEndRef.current?.();
         }
       });
@@ -357,8 +557,11 @@ export function TavusAgentPanel({
     return () => {
       cancelled = true;
       callRef.current = null;
-      tavusLog("TavusAgentPanel unmount — tearing down call");
-      void destroyDailyCall();
+      if (closingDismissTimerRef.current) {
+        clearTimeout(closingDismissTimerRef.current);
+        closingDismissTimerRef.current = null;
+      }
+      tavusLog("TavusAgentPanel unmount — detaching (call kept alive until dismiss)");
     };
   }, [conversationUrl, meetingToken, useLiveEmbed]);
 

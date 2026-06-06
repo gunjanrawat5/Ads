@@ -10,8 +10,8 @@ import type { TavusSessionResponse } from "../../lib/tavus";
 
 const AD_SLOTS: AdFixture[] = [AD_SLOT_1, AD_SLOT_2];
 
-/** After stop / negative feedback: let agent say closing line, then hard-close. */
-const AD_QUICK_CLOSE_SECONDS = 4;
+/** Safety net if Tavus never emits replica-stopped after a stop request. */
+const AD_STOP_BACKUP_CLOSE_SECONDS = 15;
 
 const QUICK_CLOSE_SIGNALS = new Set([
   "skip",
@@ -63,12 +63,14 @@ export default function GetStartedPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const firedRef = useRef<Set<number>>(new Set());
   const adCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const adStopRequestedRef = useRef(false);
   const [sessionId, setSessionId] = useState(() => `demo-${Date.now()}`);
 
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(180);
   const [activeAd, setActiveAd] = useState<ActiveAd | null>(null);
   const [adLoading, setAdLoading] = useState(false);
+  const [stopPending, setStopPending] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
 
   const markers = useMemo(
@@ -85,11 +87,14 @@ export default function GetStartedPage() {
   );
 
   const dismissAd = useCallback(() => {
+    tavusLog("dismissAd — closing overlay and resuming video");
     if (adCloseTimerRef.current) {
       clearTimeout(adCloseTimerRef.current);
       adCloseTimerRef.current = null;
     }
 
+    adStopRequestedRef.current = false;
+    setStopPending(false);
     void destroyDailyCall();
     setActiveAd(null);
     setFeedbackStatus(null);
@@ -111,7 +116,9 @@ export default function GetStartedPage() {
   );
 
   const sendFeedback = useCallback(
-    async (buttonSignal: string) => {
+    async (buttonSignal: string, options?: { scheduleClose?: boolean }) => {
+      const scheduleClose = options?.scheduleClose ?? true;
+
       if (!activeAd) {
         return;
       }
@@ -153,8 +160,11 @@ export default function GetStartedPage() {
                 `Signal recorded (${data.analysis?.emotionSignal ?? buttonSignal}).`),
           );
 
-          if (closing) {
-            scheduleAdClose(AD_QUICK_CLOSE_SECONDS, `feedback:${buttonSignal}`);
+          if (closing && scheduleClose && !adStopRequestedRef.current) {
+            scheduleAdClose(
+              AD_STOP_BACKUP_CLOSE_SECONDS,
+              `feedback:${buttonSignal}`,
+            );
           }
         } else {
           setFeedbackStatus("Feedback failed — try again.");
@@ -163,13 +173,23 @@ export default function GetStartedPage() {
         setFeedbackStatus("Feedback failed — try again.");
       }
     },
-    [activeAd, dismissAd, scheduleAdClose, sessionId],
+    [activeAd, scheduleAdClose, sessionId],
   );
 
   const handleStopRequested = useCallback(() => {
-    tavusLog("viewer said stop — scheduling quick close after agent closing line");
-    void sendFeedback("skip");
-  }, [sendFeedback]);
+    if (adStopRequestedRef.current) {
+      return;
+    }
+
+    adStopRequestedRef.current = true;
+    setStopPending(true);
+    tavusLog(
+      "viewer requested stop — auto-dismiss when agent finishes closing line",
+    );
+    setFeedbackStatus("Got it — closing ad after the agent finishes…");
+    scheduleAdClose(AD_STOP_BACKUP_CLOSE_SECONDS, "voice-stop-backup");
+    void sendFeedback("skip", { scheduleClose: false });
+  }, [sendFeedback, scheduleAdClose]);
 
   const triggerAd = useCallback(
     async (slot: AdFixture) => {
@@ -223,23 +243,30 @@ export default function GetStartedPage() {
     [activeAd, adLoading, sessionId],
   );
 
-  useEffect(() => {
+  const scheduleFullAdClose = useCallback(() => {
     if (!activeAd) {
       return;
     }
 
     scheduleAdClose(
-      activeAd.slot.adCandidate.defaultLengthSeconds,
+      activeAd.slot.adCandidate.defaultLengthSeconds + 5,
       `slot-${activeAd.slot.adIndex}-full-duration`,
     );
-
-    return () => {
-      if (adCloseTimerRef.current) {
-        clearTimeout(adCloseTimerRef.current);
-        adCloseTimerRef.current = null;
-      }
-    };
   }, [activeAd, scheduleAdClose]);
+
+  useEffect(() => {
+    if (!activeAd) {
+      return;
+    }
+
+    // Schedule immediately as a fallback if the agent never reports live.
+    scheduleAdClose(
+      activeAd.slot.adCandidate.defaultLengthSeconds + 20,
+      `slot-${activeAd.slot.adIndex}-join-fallback`,
+    );
+    // Intentionally no cleanup — React Strict Mode remounts were clearing the
+    // timer before it fired. dismissAd() clears the timer when the ad closes.
+  }, [activeAd?.session.sessionId, activeAd?.slot.adIndex, scheduleAdClose]);
 
   function syncTime() {
     if (!videoRef.current) {
@@ -296,6 +323,8 @@ export default function GetStartedPage() {
       adCloseTimerRef.current = null;
     }
 
+    adStopRequestedRef.current = false;
+    setStopPending(false);
     void destroyDailyCall();
     setSessionId(`demo-${Date.now()}`);
     firedRef.current.clear();
@@ -374,6 +403,8 @@ export default function GetStartedPage() {
                                 onPerceptionSignal={sendFeedback}
                                 onConversationEnd={dismissAd}
                                 onStopRequested={handleStopRequested}
+                                onAgentLive={scheduleFullAdClose}
+                                stopPending={stopPending}
                               />
 
                               <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[#f3e8a6]/30 pt-3">
@@ -381,7 +412,11 @@ export default function GetStartedPage() {
                                   <button
                                     key={signal}
                                     type="button"
-                                    onClick={() => void sendFeedback(signal)}
+                                    onClick={() =>
+                                      signal === "skip"
+                                        ? handleStopRequested()
+                                        : void sendFeedback(signal)
+                                    }
                                     className="border border-[#f3e8a6]/60 px-2 py-1 text-[10px] uppercase tracking-wide transition-colors hover:bg-[#f3e8a6] hover:text-black sm:text-xs"
                                   >
                                     {label}
